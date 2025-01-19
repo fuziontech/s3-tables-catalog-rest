@@ -43,20 +43,6 @@ The tests cover:
 - Request/response format validation
 - Error handling
 
-### Integration Tests
-The integration tests require AWS credentials and an S3 bucket. Set these environment variables:
-```bash
-export AWS_ACCESS_KEY_ID=your_access_key
-export AWS_SECRET_ACCESS_KEY=your_secret_key
-export AWS_REGION=your_region
-export S3_BUCKET=your_bucket
-```
-
-Then run:
-```bash
-./gradlew integrationTest
-```
-
 ## Running
 
 ```bash
