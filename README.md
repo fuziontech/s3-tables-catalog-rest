@@ -6,11 +6,55 @@ This is a REST service wrapper for the S3 Tables Catalog library. It provides a 
 
 - Java 17 or later
 - Gradle
+- Access to S3 Tables Catalog library (should be in the parent directory)
 
 ## Building
 
 ```bash
 ./gradlew build
+```
+
+## Running Tests
+
+The tests require AWS credentials to be set as environment variables. You can set these up using:
+
+```bash
+export AWS_ACCESS_KEY_ID=your_access_key
+export AWS_SECRET_ACCESS_KEY=your_secret_key
+export AWS_REGION=us-west-2
+```
+
+Then run the tests with:
+```bash
+./gradlew test
+```
+
+The tests use a local endpoint (http://localhost:4566) for S3 Tables operations, which assumes you have LocalStack or a similar service running locally.
+
+To see the test results, open:
+```
+build/reports/tests/test/index.html
+```
+
+The tests cover:
+- Configuration endpoint functionality
+- Namespace operations (create, list)
+- Table operations (list)
+- Request/response format validation
+- Error handling
+
+### Integration Tests
+The integration tests require AWS credentials and an S3 bucket. Set these environment variables:
+```bash
+export AWS_ACCESS_KEY_ID=your_access_key
+export AWS_SECRET_ACCESS_KEY=your_secret_key
+export AWS_REGION=your_region
+export S3_BUCKET=your_bucket
+```
+
+Then run:
+```bash
+./gradlew integrationTest
 ```
 
 ## Running
