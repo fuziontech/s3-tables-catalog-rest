@@ -39,3 +39,11 @@ application-dev.properties
 # Logs
 logs/
 *.log
+
+# Environment variables
+.env
+jars/
+.venv/
+__pycache__/
+*.pyc
+volume/

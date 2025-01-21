@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  catalog-rest:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_REGION=us-west-2
+      - AWS_ENDPOINT_URL=http://localstack:4566
+    depends_on:
+      - localstack
+
+  localstack:
+    image: localstack/localstack:2.3.2
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=s3
+      - DEFAULT_REGION=us-west-2
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - DEBUG=1
+      - PERSISTENCE=1
+    volumes:
+      - "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
+
+  pyspark:
+    image: jupyter/pyspark-notebook:latest
+    ports:
+      - "8888:8888"
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_REGION=us-west-2
+      - AWS_ENDPOINT_URL=http://localstack:4566
+    volumes:
+      - ./notebooks:/home/jovyan/work
+    depends_on:
+      - catalog-rest
+      - localstack
+
+volumes:
+  localstack-data:

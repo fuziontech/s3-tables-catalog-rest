@@ -7,7 +7,11 @@ import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.PartitionSpecParser;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.exceptions.AlreadyExistsException;
+import org.apache.iceberg.exceptions.NoSuchNamespaceException;
+import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import software.amazon.s3tables.iceberg.S3TablesCatalog;
@@ -20,133 +24,189 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/v1")
 public class S3TablesRestCatalogController {
-  @Autowired
-  private S3TablesCatalog catalog;
 
-  @GetMapping("/config")
-  public ResponseEntity<Map<String, String>> config() {
-    Map<String, String> config = new HashMap<>();
-    config.put("catalog-version", "1.5.0");
-    config.put("catalog-impl", "software.amazon.s3tables.iceberg.S3TablesCatalog");
-    config.put("warehouse", catalog.name());
-    return ResponseEntity.ok(config);
-  }
+    @Autowired
+    private S3TablesCatalog catalog;
 
-  @PostMapping("/namespaces")
-  public ResponseEntity<Map<String, Object>> createNamespace(@RequestBody Map<String, Object> request) {
-    String[] namespace = ((String) request.get("namespace")).split("\\.");
-    @SuppressWarnings("unchecked")
-    Map<String, String> properties = (Map<String, String>) request.get("properties");
+    @GetMapping("/config")
+    public Map<String, String> getConfig() {
+        Map<String, String> config = new HashMap<>();
+        config.put("catalog-version", "1.5.0");
+        config.put("catalog-impl", catalog.getClass().getName());
+        return config;
+    }
 
-    catalog.createNamespace(Namespace.of(namespace), properties);
+    @PostMapping("/namespaces")
+    public ResponseEntity<?> createNamespace(
+            @RequestBody Map<String, Object> request) {
+        try {
+            String namespaceStr = (String) request.get("namespace");
+            Map<String, String> properties = (Map<String, String>) request.getOrDefault("properties", new HashMap<>());
 
-    Map<String, Object> response = new HashMap<>();
-    response.put("namespace", String.join(".", namespace));
-    response.put("properties", properties);
-    return ResponseEntity.ok(response);
-  }
+            // Split namespace string into levels
+            String[] levels = namespaceStr.split("\\.");
+            Namespace namespace = Namespace.of(levels);
 
-  @GetMapping("/namespaces")
-  public ResponseEntity<List<Map<String, Object>>> listNamespaces(@RequestParam(required = false) String parent) {
-    List<Namespace> namespaces = catalog.listNamespaces(
-        parent != null ? Namespace.of(parent.split("\\.")) : null);
+            catalog.createNamespace(namespace, properties);
+            return ResponseEntity.ok().build();
+        } catch (AlreadyExistsException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("error", "Namespace already exists", "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to create namespace", "message", e.getMessage()));
+        }
+    }
 
-    List<Map<String, Object>> response = namespaces.stream()
-        .map(ns -> {
-          Map<String, Object> item = new HashMap<>();
-          item.put("namespace", String.join(".", ns.levels()));
-          item.put("metadata", catalog.loadNamespaceMetadata(ns));
-          return item;
-        })
-        .collect(Collectors.toList());
+    @GetMapping("/namespaces")
+    public ResponseEntity<?> listNamespaces(
+            @RequestParam(required = false) String parent) {
+        try {
+            Namespace parentNs = parent != null ? Namespace.of(parent.split("\\.")) : null;
+            List<Namespace> namespaces = catalog.listNamespaces(parentNs);
 
-    return ResponseEntity.ok(response);
-  }
+            List<Map<String, Object>> result = namespaces.stream()
+                .map(ns -> {
+                    Map<String, Object> nsMap = new HashMap<>();
+                    nsMap.put("namespace", String.join(".", ns.levels()));
+                    return nsMap;
+                })
+                .collect(Collectors.toList());
 
-  @GetMapping("/namespaces/{namespace}")
-  public ResponseEntity<Map<String, Object>> loadNamespace(@PathVariable String namespace) {
-    Namespace ns = Namespace.of(namespace.split("\\."));
-    Map<String, String> metadata = catalog.loadNamespaceMetadata(ns);
+            return ResponseEntity.ok(result);
+        } catch (NoSuchNamespaceException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("error", "Namespace not found", "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to list namespaces", "message", e.getMessage()));
+        }
+    }
 
-    Map<String, Object> response = new HashMap<>();
-    response.put("namespace", namespace);
-    response.put("metadata", metadata);
-    return ResponseEntity.ok(response);
-  }
+    @GetMapping("/namespaces/{namespace}")
+    public ResponseEntity<?> getNamespace(
+            @PathVariable String namespace) {
+        try {
+            Namespace ns = Namespace.of(namespace.split("\\."));
+            Map<String, String> properties = catalog.loadNamespaceMetadata(ns);
 
-  @PostMapping("/tables")
-  public ResponseEntity<Map<String, Object>> createTable(@RequestBody Map<String, Object> request) {
-    String[] namespace = ((String) request.get("namespace")).split("\\.");
-    String name = (String) request.get("name");
-    TableIdentifier identifier = TableIdentifier.of(Namespace.of(namespace), name);
+            Map<String, Object> result = new HashMap<>();
+            result.put("namespace", namespace);
+            result.put("properties", properties);
+            return ResponseEntity.ok(result);
+        } catch (NoSuchNamespaceException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("error", "Namespace not found", "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to get namespace", "message", e.getMessage()));
+        }
+    }
 
-    @SuppressWarnings("unchecked")
-    Map<String, Object> schema = (Map<String, Object>) request.get("schema");
-    @SuppressWarnings("unchecked")
-    Map<String, Object> spec = (Map<String, Object>) request.getOrDefault("spec", null);
-    @SuppressWarnings("unchecked")
-    Map<String, String> properties = (Map<String, String>) request.getOrDefault("properties", new HashMap<>());
+    @PostMapping("/tables")
+    public ResponseEntity<?> createTable(
+            @RequestBody Map<String, Object> request) {
+        try {
+            String namespace = (String) request.get("namespace");
+            String name = (String) request.get("name");
+            Map<String, Object> schema = (Map<String, Object>) request.get("schema");
+            Map<String, Object> spec = (Map<String, Object>) request.get("spec");
+            Map<String, String> properties = (Map<String, String>) request.getOrDefault("properties", new HashMap<>());
 
-    Schema icebergSchema = SchemaParser.fromJson(schema.toString());
-    PartitionSpec partitionSpec = spec != null
-        ? PartitionSpecParser.fromJson(icebergSchema, spec.toString())
-        : PartitionSpec.unpartitioned();
+            TableIdentifier identifier = TableIdentifier.of(Namespace.of(namespace.split("\\.")), name);
 
-    Table table = catalog.createTable(
-        identifier,
-        icebergSchema,
-        partitionSpec,
-        properties);
+            Schema icebergSchema = SchemaParser.fromJson(schema.toString());
+            PartitionSpec partitionSpec = spec != null
+                ? PartitionSpecParser.fromJson(icebergSchema, spec.toString())
+                : PartitionSpec.unpartitioned();
 
-    Map<String, Object> response = new HashMap<>();
-    response.put("namespace", String.join(".", namespace));
-    response.put("name", name);
-    response.put("schema", SchemaParser.toJson(table.schema()));
-    response.put("spec", PartitionSpecParser.toJson(table.spec()));
-    response.put("properties", table.properties());
-    response.put("location", table.location());
-    return ResponseEntity.ok(response);
-  }
+            Table table = catalog.createTable(
+                identifier,
+                icebergSchema,
+                partitionSpec,
+                properties);
 
-  @GetMapping("/tables")
-  public ResponseEntity<List<Map<String, Object>>> listTables(@RequestParam(required = false) String namespace) {
-    List<TableIdentifier> tables = catalog.listTables(
-        namespace != null ? Namespace.of(namespace.split("\\.")) : null);
+            Map<String, Object> response = new HashMap<>();
+            response.put("name", table.name());
+            response.put("schema", SchemaParser.toJson(table.schema()));
+            response.put("spec", PartitionSpecParser.toJson(table.spec()));
+            response.put("properties", table.properties());
+            return ResponseEntity.ok(response);
+        } catch (AlreadyExistsException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("error", "Table already exists", "message", e.getMessage()));
+        } catch (NoSuchNamespaceException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("error", "Namespace not found", "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to create table", "message", e.getMessage()));
+        }
+    }
 
-    List<Map<String, Object>> response = tables.stream()
-        .map(table -> {
-          Map<String, Object> item = new HashMap<>();
-          item.put("namespace", String.join(".", table.namespace().levels()));
-          item.put("name", table.name());
-          return item;
-        })
-        .collect(Collectors.toList());
+    @GetMapping("/tables")
+    public ResponseEntity<?> listTables(
+            @RequestParam(required = false) String namespace) {
+        try {
+            Namespace ns = namespace != null ? Namespace.of(namespace.split("\\.")) : null;
+            List<TableIdentifier> tables = catalog.listTables(ns);
 
-    return ResponseEntity.ok(response);
-  }
+            List<Map<String, Object>> result = tables.stream()
+                .map(table -> {
+                    Map<String, Object> tableMap = new HashMap<>();
+                    tableMap.put("namespace", String.join(".", table.namespace().levels()));
+                    tableMap.put("name", table.name());
+                    return tableMap;
+                })
+                .collect(Collectors.toList());
 
-  @GetMapping("/tables/{namespace}/{table}")
-  public ResponseEntity<Map<String, Object>> loadTable(
-      @PathVariable String namespace,
-      @PathVariable String table) {
-    TableIdentifier identifier = TableIdentifier.of(Namespace.of(namespace.split("\\.")), table);
-    Table icebergTable = catalog.loadTable(identifier);
+            return ResponseEntity.ok(result);
+        } catch (NoSuchNamespaceException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("error", "Namespace not found", "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to list tables", "message", e.getMessage()));
+        }
+    }
 
-    Map<String, Object> response = new HashMap<>();
-    response.put("namespace", namespace);
-    response.put("name", table);
-    response.put("format-version", icebergTable.properties().getOrDefault("format-version", "1"));
-    response.put("location", icebergTable.location());
-    return ResponseEntity.ok(response);
-  }
+    @GetMapping("/tables/{namespace}/{table}")
+    public ResponseEntity<?> getTable(
+            @PathVariable String namespace,
+            @PathVariable String table) {
+        try {
+            TableIdentifier identifier = TableIdentifier.of(Namespace.of(namespace.split("\\.")), table);
+            Table icebergTable = catalog.loadTable(identifier);
 
-  @DeleteMapping("/tables/{namespace}/{table}")
-  public ResponseEntity<Void> dropTable(
-      @PathVariable String namespace,
-      @PathVariable String table,
-      @RequestParam(required = false, defaultValue = "false") boolean purge) {
-    TableIdentifier identifier = TableIdentifier.of(Namespace.of(namespace.split("\\.")), table);
-    catalog.dropTable(identifier, purge);
-    return ResponseEntity.ok().build();
-  }
+            Map<String, Object> response = new HashMap<>();
+            response.put("name", icebergTable.name());
+            response.put("schema", SchemaParser.toJson(icebergTable.schema()));
+            response.put("spec", PartitionSpecParser.toJson(icebergTable.spec()));
+            response.put("properties", icebergTable.properties());
+            return ResponseEntity.ok(response);
+        } catch (NoSuchTableException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("error", "Table not found", "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to get table", "message", e.getMessage()));
+        }
+    }
+
+    @DeleteMapping("/tables/{namespace}/{table}")
+    public ResponseEntity<?> dropTable(
+            @PathVariable String namespace,
+            @PathVariable String table) {
+        try {
+            TableIdentifier identifier = TableIdentifier.of(Namespace.of(namespace.split("\\.")), table);
+            catalog.dropTable(identifier);
+            return ResponseEntity.ok().build();
+        } catch (NoSuchTableException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("error", "Table not found", "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to drop table", "message", e.getMessage()));
+        }
+    }
 }
