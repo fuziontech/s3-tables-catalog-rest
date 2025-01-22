@@ -46,25 +46,11 @@ def init_spark():
     return SparkSession.builder \
         .appName("S3TablesCatalogSQLExample") \
         .config("spark.jars", ",".join(jars)) \
-        .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions") \
-        .config("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkSessionCatalog") \
-        .config("spark.sql.catalog.spark_catalog.type", "hadoop") \
         .config("spark.sql.catalog.default", "org.apache.iceberg.spark.SparkCatalog") \
         .config("spark.sql.catalog.default.catalog-impl", "org.apache.iceberg.rest.RESTCatalog") \
         .config("spark.sql.catalog.default.uri", "http://localhost:8080") \
         .config("spark.sql.catalog.default.warehouse", warehouse_location) \
         .config("spark.sql.defaultCatalog", "default") \
-        .config("spark.hadoop.fs.s3a.access.key", aws_access_key) \
-        .config("spark.hadoop.fs.s3a.secret.key", aws_secret_key) \
-        .config("spark.hadoop.fs.s3a.region", aws_region) \
-        .config("spark.hadoop.fs.s3a.path.style.access", "true") \
-        .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
-        .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider") \
-        .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false") \
-        .config("spark.hadoop.fs.s3a.multiobjectdelete.enable", "false") \
-        .config("spark.sql.catalog.default.s3.path-style-access", "true") \
-        .config("spark.sql.catalog.default.s3.access-key-id", aws_access_key) \
-        .config("spark.sql.catalog.default.s3.secret-access-key", aws_secret_key) \
         .getOrCreate()
 
 def test_catalog_connection():
@@ -182,7 +168,7 @@ def main():
         populate_table(spark)
         query_data(spark)
     finally:
-        cleanup_resources(spark)
+    #     cleanup_resources(spark)
         print("\nStopping Spark session...")
         spark.stop()
 
