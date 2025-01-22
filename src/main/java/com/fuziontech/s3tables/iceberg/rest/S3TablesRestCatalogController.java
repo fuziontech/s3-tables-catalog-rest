@@ -251,12 +251,12 @@ public class S3TablesRestCatalogController {
             metadata.put("table-uuid", table.uuid());
             metadata.put("last-updated-ms", System.currentTimeMillis());
             metadata.put("last-column-id", icebergSchema.highestFieldId());
-            metadata.put("schema", SchemaParser.toJson(icebergSchema));
+            metadata.put("schema", objectMapper.readValue(schemaJson, Object.class));
             metadata.put("current-schema-id", icebergSchema.schemaId());
-            metadata.put("schemas", Arrays.asList(SchemaParser.toJson(icebergSchema)));
-            metadata.put("partition-spec", PartitionSpecParser.toJson(partitionSpec));
+            metadata.put("schemas", Arrays.asList(objectMapper.readValue(schemaJson, Object.class)));
+            metadata.put("partition-spec", objectMapper.readValue(PartitionSpecParser.toJson(partitionSpec), Object.class));
             metadata.put("default-spec-id", partitionSpec.specId());
-            metadata.put("partition-specs", Arrays.asList(PartitionSpecParser.toJson(partitionSpec)));
+            metadata.put("partition-specs", Arrays.asList(objectMapper.readValue(PartitionSpecParser.toJson(partitionSpec), Object.class)));
             metadata.put("last-partition-id", partitionSpec.fields().stream()
                     .mapToInt(field -> field.fieldId())
                     .max()

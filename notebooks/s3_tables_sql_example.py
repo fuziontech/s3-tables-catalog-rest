@@ -88,6 +88,7 @@ def create_table(spark):
         price DOUBLE,
         sale_date DATE
     ) USING iceberg
+    PARTITIONED BY (days(sale_date))
     TBLPROPERTIES (
         'write.format.default' = 'parquet',
         'write.metadata.compression-codec' = 'gzip'
@@ -98,7 +99,8 @@ def create_table(spark):
 def populate_table(spark):
     """Populate table with sample data"""
     print("\nChecking if table exists and has data...")
-    row_count = spark.sql("SELECT COUNT(*) as count FROM sales.orders").collect()[0].count
+    count_df = spark.sql("SELECT COUNT(*) as count FROM sales.orders").collect()
+    row_count = count_df[0]['count']
     if row_count > 0:
         print(f"Table already exists with {row_count} rows. Skipping data insertion.")
         return
@@ -106,11 +108,11 @@ def populate_table(spark):
     print("\nInserting sample data...")
     insert_data_sql = """
     INSERT INTO sales.orders (sale_id, product, quantity, price, sale_date) VALUES
-        (1, 'Laptop', 1, 999.99, '2024-01-01'),
-        (2, 'Mouse', 2, 24.99, '2024-01-01'),
-        (3, 'Keyboard', 1, 89.99, '2024-01-02'),
-        (4, 'Monitor', 2, 299.99, '2024-01-02'),
-        (5, 'Headphones', 3, 79.99, '2024-01-03')
+        (1, 'Laptop', 1, 999.99, DATE '2024-01-01'),
+        (2, 'Mouse', 2, 24.99, DATE '2024-01-01'),
+        (3, 'Keyboard', 1, 89.99, DATE '2024-01-02'),
+        (4, 'Monitor', 2, 299.99, DATE '2024-01-02'),
+        (5, 'Headphones', 3, 79.99, DATE '2024-01-03')
     """
     spark.sql(insert_data_sql)
 
