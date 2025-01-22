@@ -215,6 +215,37 @@ public class S3TablesRestCatalogController {
     public ResponseEntity<Map<String, Object>> createTable(
             @RequestBody Map<String, Object> request) {
         try {
+            System.out.println("Received create table request: " + objectMapper.writeValueAsString(request));
+
+            // Check if this is a commit request (has requirements and updates fields)
+            if (request.containsKey("requirements") && request.containsKey("updates")) {
+                // This is a commit request
+                String namespace = (String) request.get("namespace");
+                String name = (String) request.get("name");
+                if (namespace == null || name == null) {
+                    return errorResponse("Namespace and name are required for commit", "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
+                }
+
+                TableIdentifier identifier = TableIdentifier.of(Namespace.of(namespace.split("\\.")), name);
+                Table table = catalog.loadTable(identifier);
+
+                // Return successful commit response
+                Map<String, Object> metadata = new HashMap<>(table.properties());
+                metadata.put("format-version", 2);
+                metadata.put("location", table.location());
+                metadata.put("table-uuid", table.uuid());
+                metadata.put("last-updated-ms", System.currentTimeMillis());
+                metadata.put("last-column-id", table.schema().highestFieldId());
+                metadata.put("schema", SchemaParser.toJson(table.schema()));
+                metadata.put("current-schema-id", table.schema().schemaId());
+
+                Map<String, Object> response = new HashMap<>();
+                response.put("metadata-location", table.location() + "/metadata/00000-" + table.uuid() + ".metadata.json");
+                response.put("metadata", metadata);
+                return ResponseEntity.ok(response);
+            }
+
+            // Regular table creation request
             String namespace = (String) request.get("namespace");
             String name = (String) request.get("name");
             Map<String, Object> schema = (Map<String, Object>) request.get("schema");
@@ -222,6 +253,7 @@ public class S3TablesRestCatalogController {
             Map<String, String> properties = (Map<String, String>) request.getOrDefault("properties", new HashMap<>());
 
             if (namespace == null || name == null || schema == null) {
+                System.out.println("Missing required fields - namespace: " + namespace + ", name: " + name + ", schema present: " + (schema != null));
                 return errorResponse("Namespace, name, and schema are required", "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
             }
 

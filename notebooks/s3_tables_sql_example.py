@@ -49,9 +49,6 @@ def init_spark():
         .config("spark.hadoop.fs.s3a.access.key", aws_access_key) \
         .config("spark.hadoop.fs.s3a.secret.key", aws_secret_key) \
         .config("spark.hadoop.fs.s3a.region", aws_region) \
-        .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
-        .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider") \
-        .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "true") \
         .getOrCreate()
 
 def test_catalog_connection():
