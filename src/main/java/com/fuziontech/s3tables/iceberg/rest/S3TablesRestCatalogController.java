@@ -15,6 +15,7 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.UpdateProperties;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
@@ -229,6 +230,34 @@ public class S3TablesRestCatalogController {
 
                 TableIdentifier identifier = TableIdentifier.of(Namespace.of(namespace.split("\\.")), name);
                 Table table = catalog.loadTable(identifier);
+
+                // Process updates
+                List<Map<String, Object>> updates = (List<Map<String, Object>>) request.get("updates");
+                for (Map<String, Object> update : updates) {
+                    String action = (String) update.get("action");
+                    if ("add-snapshot".equals(action)) {
+                        Map<String, Object> snapshot = (Map<String, Object>) update.get("snapshot");
+                        // Just update the metadata, don't try to modify the snapshot directly
+                        Map<String, String> props = new HashMap<>();
+                        props.put("last-updated-ms", String.valueOf(snapshot.get("timestamp-ms")));
+                        props.put("last-snapshot-id", String.valueOf(snapshot.get("snapshot-id")));
+                        props.put("last-sequence-number", String.valueOf(snapshot.get("sequence-number")));
+                        props.put("manifest-list", String.valueOf(snapshot.get("manifest-list")));
+
+                        UpdateProperties updateProps = table.updateProperties();
+                        for (Map.Entry<String, String> entry : props.entrySet()) {
+                            updateProps.set(entry.getKey(), entry.getValue());
+                        }
+                        updateProps.commit();
+                    } else if ("set-snapshot-ref".equals(action)) {
+                        // For set-snapshot-ref, we just update the reference in properties
+                        String refName = (String) update.get("ref-name");
+                        Number snapshotId = (Number) update.get("snapshot-id");
+                        table.updateProperties()
+                                .set("ref." + refName, String.valueOf(snapshotId))
+                                .commit();
+                    }
+                }
 
                 // Build metadata in the format Iceberg expects
                 Map<String, Object> metadata = new HashMap<>();
