@@ -304,6 +304,18 @@ public class S3TablesRestCatalogController {
         return createTable(modifiedRequest);
     }
 
+    @PostMapping("/namespaces/{namespace}/tables/{table}")
+    public ResponseEntity<Map<String, Object>> createTableInNamespaceWithName(
+            @PathVariable String namespace,
+            @PathVariable String table,
+            @RequestBody Map<String, Object> request) {
+        // Add namespace and table name to the request
+        Map<String, Object> modifiedRequest = new HashMap<>(request);
+        modifiedRequest.put("namespace", namespace);
+        modifiedRequest.put("name", table);
+        return createTable(modifiedRequest);
+    }
+
     @GetMapping("/tables")
     public ResponseEntity<Map<String, Object>> listTables(
             @RequestParam(required = false) String namespace) {
