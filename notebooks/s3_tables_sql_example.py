@@ -168,7 +168,7 @@ def main():
         populate_table(spark)
         query_data(spark)
     finally:
-    #     cleanup_resources(spark)
+        cleanup_resources(spark)
         print("\nStopping Spark session...")
         spark.stop()
 

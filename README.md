@@ -6,7 +6,7 @@ This is a REST service wrapper for the S3 Tables Catalog library. It provides a 
 
 - Java 17 or later
 - Gradle
-- Access to S3 Tables Catalog library (should be in the parent directory)
+- Python 3.10+ (for running PySpark examples)
 
 ## Building
 
@@ -36,14 +36,7 @@ To see the test results, open:
 build/reports/tests/test/index.html
 ```
 
-The tests cover:
-- Configuration endpoint functionality
-- Namespace operations (create, list)
-- Table operations (list)
-- Request/response format validation
-- Error handling
-
-## Running
+## Running the Service
 
 ```bash
 ./gradlew bootRun
@@ -51,45 +44,37 @@ The tests cover:
 
 The service will start on port 8080 by default.
 
-## Testing the Service
+## API Specification
 
-You can test if the service is running properly using these curl commands:
-
-### 1. Check Service Configuration
-```bash
-curl -X GET http://localhost:8080/v1/config
-```
-Expected response:
-```json
-{
+### Catalog Configuration
+- `GET /v1/config` - Get catalog configuration
+  ```json
+  {
     "catalog-version": "1.5.0",
     "catalog-impl": "software.amazon.s3tables.iceberg.S3TablesCatalog",
     "warehouse": "<warehouse-name>"
-}
-```
+  }
+  ```
 
-### 2. List Namespaces
-```bash
-curl -X GET http://localhost:8080/v1/namespaces
-```
-
-### 3. Create a Namespace
-```bash
-curl -X POST http://localhost:8080/v1/namespaces \
-  -H "Content-Type: application/json" \
-  -d '{
+### Namespace Operations
+- `POST /v1/namespaces` - Create a new namespace
+  ```json
+  {
     "namespace": "example.test",
     "properties": {
       "comment": "Test namespace"
     }
-  }'
-```
+  }
+  ```
 
-### 4. Create a Table
-```bash
-curl -X POST http://localhost:8080/v1/tables \
-  -H "Content-Type: application/json" \
-  -d '{
+- `GET /v1/namespaces` - List all namespaces
+- `GET /v1/namespaces/{namespace}` - Get namespace details
+- `DELETE /v1/namespaces/{namespace}` - Delete a namespace
+
+### Table Operations
+- `POST /v1/tables` - Create a new table
+  ```json
+  {
     "namespace": "example.test",
     "name": "sample_table",
     "schema": {
@@ -102,29 +87,53 @@ curl -X POST http://localhost:8080/v1/tables \
     "properties": {
       "write.format.default": "parquet"
     }
-  }'
-```
+  }
+  ```
 
-### 5. List Tables
-```bash
-curl -X GET http://localhost:8080/v1/tables?namespace=example.test
-```
-
-## API Endpoints
-
-### Catalog Configuration
-- `GET /v1/config` - Get catalog configuration
-
-### Namespace Operations
-- `POST /v1/namespaces` - Create a new namespace
-- `GET /v1/namespaces` - List namespaces
-- `GET /v1/namespaces/{namespace}` - Get namespace details
-
-### Table Operations
-- `POST /v1/tables` - Create a new table
-- `GET /v1/tables` - List tables
+- `GET /v1/tables` - List tables (query params: `namespace`)
 - `GET /v1/tables/{namespace}/{table}` - Get table details
 - `DELETE /v1/tables/{namespace}/{table}` - Drop a table
+
+## Running the PySpark Example
+
+The repository includes a PySpark example script that demonstrates how to use the REST catalog service with Spark SQL.
+
+### Setup
+
+1. Create a `.env` file with your AWS credentials and S3 warehouse location:
+```bash
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+AWS_REGION=us-east-1
+AWS_S3_WAREHOUSE=arn for s3 tables
+```
+
+2. Install Python dependencies:
+```bash
+pip install pyspark python-dotenv requests
+```
+
+3. Run the example script:
+```bash
+python notebooks/s3_tables_sql_example.py
+```
+
+The script will:
+- Download required JAR dependencies
+- Initialize a Spark session with the REST catalog configuration
+- Create a test namespace and table
+- Insert sample data
+- Run example queries
+- (Optionally) Clean up created resources
+
+### Example Operations
+
+The script demonstrates:
+- Creating and managing namespaces using Spark SQL
+- Creating tables with partitioning
+- Inserting sample data
+- Running analytical queries
+- Table and namespace cleanup
 
 ## Configuration
 
@@ -133,3 +142,8 @@ The service can be configured through `src/main/resources/application.properties
 - `server.port` - HTTP port (default: 8080)
 - `spring.application.name` - Application name
 - `management.endpoints.web.exposure.include` - Exposed actuator endpoints
+- `aws.access.key` - AWS access key
+- `aws.secret.key` - AWS secret key
+- `aws.region` - AWS region (default: us-east-1)
+- `aws.s3.warehouse` - S3 warehouse location
+- `s3tables.impl` - S3 implementation class (default: org.apache.hadoop.fs.s3a.S3AFileSystem)
