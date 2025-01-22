@@ -87,6 +87,8 @@ public class S3TablesRestCatalogController {
                     "POST /v1/namespaces/{namespace}/tables",
                     "GET /v1/namespaces/{namespace}/tables/{table}",
                     "DELETE /v1/namespaces/{namespace}/tables/{table}",
+                    "GET /v1/tables/{namespace}/{table}",
+                    "DELETE /v1/tables/{namespace}/{table}",
                     "POST /v1/tables/rename"
             );
             config.put("endpoints", endpoints);
@@ -255,11 +257,25 @@ public class S3TablesRestCatalogController {
             metadata.put("partition-spec", PartitionSpecParser.toJson(partitionSpec));
             metadata.put("default-spec-id", partitionSpec.specId());
             metadata.put("partition-specs", Arrays.asList(PartitionSpecParser.toJson(partitionSpec)));
-            metadata.put("sort-orders", Arrays.asList());
+            metadata.put("last-partition-id", partitionSpec.fields().stream()
+                    .mapToInt(field -> field.fieldId())
+                    .max()
+                    .orElse(0));
+
+            // Handle sort orders
+            Map<String, Object> defaultSortOrder = new HashMap<>();
+            defaultSortOrder.put("order-id", 0);
+            defaultSortOrder.put("fields", Arrays.asList());
+            metadata.put("sort-orders", Arrays.asList(defaultSortOrder));
             metadata.put("default-sort-order-id", 0);
+
             metadata.put("snapshots", Arrays.asList());
             metadata.put("snapshot-log", Arrays.asList());
             metadata.put("metadata-log", Arrays.asList());
+            metadata.put("last-sequence-number", 0L);
+
+            // Add table properties
+            metadata.putAll(table.properties());
 
             Map<String, Object> response = new HashMap<>();
             response.put("metadata-location", table.location());
@@ -357,20 +373,46 @@ public class S3TablesRestCatalogController {
             TableIdentifier identifier = TableIdentifier.of(Namespace.of(namespace.split("\\.")), table);
             Table icebergTable = catalog.loadTable(identifier);
 
-            Map<String, Object> metadata = new HashMap<>(icebergTable.properties());
+            Map<String, Object> metadata = new HashMap<>();
             metadata.put("format-version", 2);
             metadata.put("location", icebergTable.location());
             metadata.put("table-uuid", icebergTable.uuid());
             metadata.put("last-updated-ms", System.currentTimeMillis());
             metadata.put("last-column-id", icebergTable.schema().highestFieldId());
-            metadata.put("schema", SchemaParser.toJson(icebergTable.schema()));
-            metadata.put("current-schema-id", icebergTable.schema().schemaId());
-            metadata.put("schemas", Arrays.asList(SchemaParser.toJson(icebergTable.schema())));
-            metadata.put("partition-spec", PartitionSpecParser.toJson(icebergTable.spec()));
+
+            // Handle schema properly
+            Schema schema = icebergTable.schema();
+            String schemaJson = SchemaParser.toJson(schema);
+            Map<String, Object> schemaMap = objectMapper.readValue(schemaJson, Map.class);
+            metadata.put("schema", schemaMap);
+            metadata.put("current-schema-id", schema.schemaId());
+            metadata.put("schemas", Arrays.asList(schemaMap));
+
+            // Handle partition spec
+            String specJson = PartitionSpecParser.toJson(icebergTable.spec());
+            Map<String, Object> specMap = objectMapper.readValue(specJson, Map.class);
+            metadata.put("partition-spec", specMap);
             metadata.put("default-spec-id", icebergTable.spec().specId());
-            metadata.put("partition-specs", Arrays.asList(PartitionSpecParser.toJson(icebergTable.spec())));
-            metadata.put("sort-orders", Arrays.asList());
+            metadata.put("partition-specs", Arrays.asList(specMap));
+            metadata.put("last-partition-id", icebergTable.spec().fields().stream()
+                    .mapToInt(field -> field.fieldId())
+                    .max()
+                    .orElse(0));
+
+            // Handle sort orders
+            Map<String, Object> defaultSortOrder = new HashMap<>();
+            defaultSortOrder.put("order-id", 0);
+            defaultSortOrder.put("fields", Arrays.asList());
+            metadata.put("sort-orders", Arrays.asList(defaultSortOrder));
             metadata.put("default-sort-order-id", 0);
+
+            metadata.put("snapshots", Arrays.asList());
+            metadata.put("snapshot-log", Arrays.asList());
+            metadata.put("metadata-log", Arrays.asList());
+            metadata.put("last-sequence-number", 0L);
+
+            // Add table properties
+            metadata.putAll(icebergTable.properties());
 
             // Include snapshots if requested
             if ("all".equals(snapshots)) {
@@ -384,15 +426,10 @@ public class S3TablesRestCatalogController {
                     snapshotsList.add(snapshotInfo);
                 });
                 metadata.put("snapshots", snapshotsList);
-                metadata.put("snapshot-log", Arrays.asList());
-            } else {
-                metadata.put("snapshots", Arrays.asList());
-                metadata.put("snapshot-log", Arrays.asList());
             }
-            metadata.put("metadata-log", Arrays.asList());
 
             Map<String, Object> response = new HashMap<>();
-            response.put("metadata-location", icebergTable.location());
+            response.put("metadata-location", icebergTable.location() + "/metadata/00000-" + icebergTable.uuid() + ".metadata.json");
             response.put("metadata", metadata);
             return ResponseEntity.ok(response);
         } catch (NoSuchTableException e) {
@@ -658,5 +695,12 @@ public class S3TablesRestCatalogController {
         } catch (Exception e) {
             return errorResponse(e.getMessage(), "InternalServerError", HttpStatus.INTERNAL_SERVER_ERROR.value());
         }
+    }
+
+    @DeleteMapping("/namespaces/{namespace}/tables/{table}")
+    public ResponseEntity<Map<String, Object>> dropTableInNamespace(
+            @PathVariable String namespace,
+            @PathVariable String table) {
+        return dropTable(namespace, table);
     }
 }
