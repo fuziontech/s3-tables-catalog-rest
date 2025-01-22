@@ -1,15 +1,27 @@
 package com.fuziontech.s3tables.iceberg.rest;
 
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import software.amazon.s3tables.iceberg.S3TablesCatalog;
-
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+import org.springframework.web.util.ContentCachingResponseWrapper;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import software.amazon.s3tables.iceberg.S3TablesCatalog;
+
 @Configuration
-public class S3TablesRestCatalogConfig {
+public class S3TablesRestCatalogConfig implements WebMvcConfigurer {
 
     @Value("${aws.access.key:#{null}}")
     private String awsAccessKey;
@@ -25,6 +37,65 @@ public class S3TablesRestCatalogConfig {
 
     @Value("${s3tables.impl:org.apache.hadoop.fs.s3a.S3AFileSystem}")
     private String s3Implementation;
+
+    @Bean
+    public FilterRegistrationBean<ResponseLoggingFilter> loggingFilter() {
+        FilterRegistrationBean<ResponseLoggingFilter> registrationBean = new FilterRegistrationBean<>();
+        registrationBean.setFilter(new ResponseLoggingFilter());
+        registrationBean.addUrlPatterns("/v1/*");
+        return registrationBean;
+    }
+
+    public static class ResponseLoggingFilter extends OncePerRequestFilter {
+
+        private final ObjectMapper objectMapper = new ObjectMapper();
+
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+                throws ServletException, IOException {
+            // Log request
+            String queryString = request.getQueryString();
+            String fullPath = queryString != null
+                    ? request.getRequestURI() + "?" + queryString
+                    : request.getRequestURI();
+            System.out.println("\n=== Incoming Request ===");
+            System.out.println("Method: " + request.getMethod());
+            System.out.println("Path: " + fullPath);
+            System.out.println("Remote Address: " + request.getRemoteAddr());
+
+            // Wrap response
+            ContentCachingResponseWrapper responseWrapper = new ContentCachingResponseWrapper(response);
+
+            try {
+                filterChain.doFilter(request, responseWrapper);
+            } finally {
+                // Log response
+                byte[] responseBody = responseWrapper.getContentAsByteArray();
+                if (responseBody.length > 0) {
+                    String responseContent = new String(responseBody);
+                    try {
+                        Object json = objectMapper.readValue(responseContent, Object.class);
+                        String prettyJson = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(json);
+                        System.out.println("\n=== Response ===");
+                        System.out.println("Status: " + responseWrapper.getStatus());
+                        System.out.println("Body:\n" + prettyJson);
+                    } catch (Exception e) {
+                        // If it's not JSON, just log the raw content
+                        System.out.println("\n=== Response ===");
+                        System.out.println("Status: " + responseWrapper.getStatus());
+                        System.out.println("Body: " + responseContent);
+                    }
+                } else {
+                    System.out.println("\n=== Response ===");
+                    System.out.println("Status: " + responseWrapper.getStatus());
+                    System.out.println("Body: <empty>");
+                }
+
+                // Copy content to the original response
+                responseWrapper.copyBodyToResponse();
+            }
+        }
+    }
 
     @Bean
     public S3TablesCatalog s3TablesCatalog() {

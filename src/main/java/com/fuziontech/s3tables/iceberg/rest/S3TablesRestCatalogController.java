@@ -46,62 +46,78 @@ public class S3TablesRestCatalogController {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    @GetMapping("/config")
-    public Map<String, Object> getConfig(@RequestParam(required = false) String warehouse) {
-        Map<String, Object> config = new HashMap<>();
-
-        // Add catalog defaults
-        Map<String, String> defaults = new HashMap<>();
-        defaults.put("clients", "4");
-        config.put("defaults", defaults);
-
-        // Add catalog overrides
-        Map<String, String> overrides = new HashMap<>();
-        if (warehouse != null) {
-            overrides.put("warehouse", warehouse);
-        } else {
-            overrides.put("warehouse", "s3://posthog-table-bucket/");
-        }
-        config.put("overrides", overrides);
-
-        // Add supported endpoints
-        List<String> endpoints = Arrays.asList(
-                "GET /v1/config",
-                "GET /v1/namespaces",
-                "POST /v1/namespaces",
-                "GET /v1/namespaces/{namespace}",
-                "DELETE /v1/namespaces/{namespace}",
-                "GET /v1/namespaces/{namespace}/tables",
-                "POST /v1/namespaces/{namespace}/tables",
-                "GET /v1/namespaces/{namespace}/tables/{table}",
-                "DELETE /v1/namespaces/{namespace}/tables/{table}",
-                "POST /v1/tables/rename"
+    private ResponseEntity<Map<String, Object>> errorResponse(String message, String type, int code) {
+        Map<String, Object> response = Map.of(
+                "error", Map.of(
+                        "message", message,
+                        "type", type,
+                        "code", code
+                )
         );
-        config.put("endpoints", endpoints);
+        return ResponseEntity.status(code).body(response);
+    }
 
-        return config;
+    @GetMapping("/config")
+    public ResponseEntity<Map<String, Object>> getConfig(@RequestParam(required = false) String warehouse) {
+        try {
+            Map<String, Object> config = new HashMap<>();
+
+            // Add catalog defaults
+            Map<String, String> defaults = new HashMap<>();
+            defaults.put("clients", "4");
+            config.put("defaults", defaults);
+
+            // Add catalog overrides
+            Map<String, String> overrides = new HashMap<>();
+            if (warehouse != null) {
+                overrides.put("warehouse", warehouse);
+            } else {
+                overrides.put("warehouse", "s3://posthog-table-bucket/");
+            }
+            config.put("overrides", overrides);
+
+            // Add supported endpoints
+            List<String> endpoints = Arrays.asList(
+                    "GET /v1/config",
+                    "GET /v1/namespaces",
+                    "POST /v1/namespaces",
+                    "GET /v1/namespaces/{namespace}",
+                    "DELETE /v1/namespaces/{namespace}",
+                    "GET /v1/namespaces/{namespace}/tables",
+                    "POST /v1/namespaces/{namespace}/tables",
+                    "GET /v1/namespaces/{namespace}/tables/{table}",
+                    "DELETE /v1/namespaces/{namespace}/tables/{table}",
+                    "POST /v1/tables/rename"
+            );
+            config.put("endpoints", endpoints);
+
+            return ResponseEntity.ok(config);
+        } catch (IllegalArgumentException e) {
+            return errorResponse(e.getMessage(), "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
+        } catch (Exception e) {
+            return errorResponse(e.getMessage(), "InternalServerError", HttpStatus.INTERNAL_SERVER_ERROR.value());
+        }
     }
 
     @PostMapping("/namespaces")
-    public ResponseEntity<?> createNamespace(
-            @RequestBody Map<String, Object> request) {
+    public ResponseEntity<Map<String, Object>> createNamespace(@RequestBody Map<String, Object> request) {
         try {
             Object namespaceObj = request.get("namespace");
             if (namespaceObj == null) {
-                throw new IllegalArgumentException("Namespace is required");
+                return errorResponse("Namespace is required", "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
             }
 
             String[] levels;
             if (namespaceObj instanceof String) {
                 String namespaceStr = (String) namespaceObj;
                 if (namespaceStr.trim().isEmpty()) {
-                    throw new IllegalArgumentException("Namespace cannot be empty");
+                    return errorResponse("Namespace cannot be empty", "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
                 }
                 levels = namespaceStr.split("\\.");
             } else if (namespaceObj instanceof List) {
                 List<?> namespaceParts = (List<?>) namespaceObj;
                 if (namespaceParts.isEmpty()) {
-                    throw new IllegalArgumentException("Namespace cannot be empty");
+                    return errorResponse("Namespace cannot be empty", "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
                 }
                 levels = namespaceParts.stream()
                         .map(part -> {
@@ -112,13 +128,13 @@ public class S3TablesRestCatalogController {
                         })
                         .toArray(String[]::new);
             } else {
-                throw new IllegalArgumentException("Namespace must be a string or array");
+                return errorResponse("Namespace must be a string or array", "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
             }
 
             // Validate namespace format
             for (String level : levels) {
                 if (!level.matches("^[a-zA-Z0-9_]+$")) {
-                    throw new IllegalArgumentException("Namespace parts can only contain alphanumeric characters and underscores");
+                    return errorResponse("Namespace parts can only contain alphanumeric characters and underscores", "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
                 }
             }
 
@@ -138,37 +154,16 @@ public class S3TablesRestCatalogController {
 
             return ResponseEntity.ok(response);
         } catch (AlreadyExistsException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "AlreadyExistsException",
-                                    "code", 409
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "AlreadyExistsException", HttpStatus.CONFLICT.value());
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "IllegalArgumentException",
-                                    "code", 400
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "InternalServerError",
-                                    "code", 500
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "InternalServerError", HttpStatus.INTERNAL_SERVER_ERROR.value());
         }
     }
 
     @GetMapping("/namespaces")
-    public ResponseEntity<?> listNamespaces(
+    public ResponseEntity<Map<String, Object>> listNamespaces(
             @RequestParam(required = false) String parent) {
         try {
             List<Namespace> namespaces;
@@ -188,28 +183,14 @@ public class S3TablesRestCatalogController {
 
             return ResponseEntity.ok(response);
         } catch (NoSuchNamespaceException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "NoSuchNamespaceException",
-                                    "code", 404
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "NoSuchNamespaceException", HttpStatus.NOT_FOUND.value());
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "InternalServerError",
-                                    "code", 500
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "InternalServerError", HttpStatus.INTERNAL_SERVER_ERROR.value());
         }
     }
 
     @GetMapping("/namespaces/{namespace}")
-    public ResponseEntity<?> getNamespace(
+    public ResponseEntity<Map<String, Object>> getNamespace(
             @PathVariable String namespace) {
         try {
             String[] levels = namespace.split("\\.");
@@ -222,28 +203,14 @@ public class S3TablesRestCatalogController {
 
             return ResponseEntity.ok(response);
         } catch (NoSuchNamespaceException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "NoSuchNamespaceException",
-                                    "code", 404
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "NoSuchNamespaceException", HttpStatus.NOT_FOUND.value());
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "InternalServerError",
-                                    "code", 500
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "InternalServerError", HttpStatus.INTERNAL_SERVER_ERROR.value());
         }
     }
 
     @PostMapping("/tables")
-    public ResponseEntity<?> createTable(
+    public ResponseEntity<Map<String, Object>> createTable(
             @RequestBody Map<String, Object> request) {
         try {
             String namespace = (String) request.get("namespace");
@@ -253,7 +220,7 @@ public class S3TablesRestCatalogController {
             Map<String, String> properties = (Map<String, String>) request.getOrDefault("properties", new HashMap<>());
 
             if (namespace == null || name == null || schema == null) {
-                throw new IllegalArgumentException("Namespace, name, and schema are required");
+                return errorResponse("Namespace, name, and schema are required", "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
             }
 
             TableIdentifier identifier = TableIdentifier.of(Namespace.of(namespace.split("\\.")), name);
@@ -299,55 +266,20 @@ public class S3TablesRestCatalogController {
             response.put("metadata", metadata);
             return ResponseEntity.ok(response);
         } catch (AlreadyExistsException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "AlreadyExistsException",
-                                    "code", 409
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "AlreadyExistsException", HttpStatus.CONFLICT.value());
         } catch (NoSuchNamespaceException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "NoSuchNamespaceException",
-                                    "code", 404
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "NoSuchNamespaceException", HttpStatus.NOT_FOUND.value());
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "IllegalArgumentException",
-                                    "code", 400
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
         } catch (JsonProcessingException e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", "Invalid schema or partition spec format: " + e.getMessage(),
-                                    "type", "IllegalArgumentException",
-                                    "code", 400
-                            )
-                    ));
+            return errorResponse("Invalid schema or partition spec format: " + e.getMessage(), "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "InternalServerError",
-                                    "code", 500
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "InternalServerError", HttpStatus.INTERNAL_SERVER_ERROR.value());
         }
     }
 
     @PostMapping("/namespaces/{namespace}/tables")
-    public ResponseEntity<?> createTableInNamespace(
+    public ResponseEntity<Map<String, Object>> createTableInNamespace(
             @PathVariable String namespace,
             @RequestBody Map<String, Object> request) {
         // Add namespace to the request
@@ -357,7 +289,7 @@ public class S3TablesRestCatalogController {
     }
 
     @GetMapping("/tables")
-    public ResponseEntity<?> listTables(
+    public ResponseEntity<Map<String, Object>> listTables(
             @RequestParam(required = false) String namespace) {
         try {
             Namespace ns = namespace != null ? Namespace.of(namespace.split("\\.")) : null;
@@ -376,28 +308,14 @@ public class S3TablesRestCatalogController {
 
             return ResponseEntity.ok(response);
         } catch (NoSuchNamespaceException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "NoSuchNamespaceException",
-                                    "code", 404
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "NoSuchNamespaceException", HttpStatus.NOT_FOUND.value());
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "InternalServerError",
-                                    "code", 500
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "InternalServerError", HttpStatus.INTERNAL_SERVER_ERROR.value());
         }
     }
 
     @GetMapping("/namespaces/{namespace}/tables")
-    public ResponseEntity<?> listTablesInNamespace(
+    public ResponseEntity<Map<String, Object>> listTablesInNamespace(
             @PathVariable String namespace) {
         try {
             Namespace ns = Namespace.of(namespace.split("\\."));
@@ -416,30 +334,25 @@ public class S3TablesRestCatalogController {
 
             return ResponseEntity.ok(response);
         } catch (NoSuchNamespaceException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "NoSuchNamespaceException",
-                                    "code", 404
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "NoSuchNamespaceException", HttpStatus.NOT_FOUND.value());
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "InternalServerError",
-                                    "code", 500
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "InternalServerError", HttpStatus.INTERNAL_SERVER_ERROR.value());
         }
     }
 
-    @GetMapping("/tables/{namespace}/{table}")
-    public ResponseEntity<?> getTable(
+    @GetMapping("/namespaces/{namespace}/tables/{table}")
+    public ResponseEntity<Map<String, Object>> getTableInNamespace(
             @PathVariable String namespace,
-            @PathVariable String table) {
+            @PathVariable String table,
+            @RequestParam(required = false) String snapshots) {
+        return getTable(namespace, table, snapshots);
+    }
+
+    @GetMapping("/tables/{namespace}/{table}")
+    public ResponseEntity<Map<String, Object>> getTable(
+            @PathVariable String namespace,
+            @PathVariable String table,
+            @RequestParam(required = false) String snapshots) {
         try {
             TableIdentifier identifier = TableIdentifier.of(Namespace.of(namespace.split("\\.")), table);
             Table icebergTable = catalog.loadTable(identifier);
@@ -458,8 +371,24 @@ public class S3TablesRestCatalogController {
             metadata.put("partition-specs", Arrays.asList(PartitionSpecParser.toJson(icebergTable.spec())));
             metadata.put("sort-orders", Arrays.asList());
             metadata.put("default-sort-order-id", 0);
-            metadata.put("snapshots", Arrays.asList());
-            metadata.put("snapshot-log", Arrays.asList());
+
+            // Include snapshots if requested
+            if ("all".equals(snapshots)) {
+                List<Map<String, Object>> snapshotsList = new ArrayList<>();
+                icebergTable.snapshots().forEach(snapshot -> {
+                    Map<String, Object> snapshotInfo = new HashMap<>();
+                    snapshotInfo.put("snapshot-id", snapshot.snapshotId());
+                    snapshotInfo.put("timestamp-ms", snapshot.timestampMillis());
+                    snapshotInfo.put("manifest-list", snapshot.manifestListLocation());
+                    snapshotInfo.put("summary", snapshot.summary());
+                    snapshotsList.add(snapshotInfo);
+                });
+                metadata.put("snapshots", snapshotsList);
+                metadata.put("snapshot-log", Arrays.asList());
+            } else {
+                metadata.put("snapshots", Arrays.asList());
+                metadata.put("snapshot-log", Arrays.asList());
+            }
             metadata.put("metadata-log", Arrays.asList());
 
             Map<String, Object> response = new HashMap<>();
@@ -467,46 +396,18 @@ public class S3TablesRestCatalogController {
             response.put("metadata", metadata);
             return ResponseEntity.ok(response);
         } catch (NoSuchTableException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "NoSuchTableException",
-                                    "code", 404
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "NoSuchTableException", HttpStatus.NOT_FOUND.value());
         } catch (NoSuchNamespaceException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "NoSuchNamespaceException",
-                                    "code", 404
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "NoSuchNamespaceException", HttpStatus.NOT_FOUND.value());
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "IllegalArgumentException",
-                                    "code", 400
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "InternalServerError",
-                                    "code", 500
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "InternalServerError", HttpStatus.INTERNAL_SERVER_ERROR.value());
         }
     }
 
     @DeleteMapping("/tables/{namespace}/{table}")
-    public ResponseEntity<?> dropTable(
+    public ResponseEntity<Map<String, Object>> dropTable(
             @PathVariable String namespace,
             @PathVariable String table) {
         try {
@@ -514,53 +415,25 @@ public class S3TablesRestCatalogController {
             catalog.dropTable(identifier);
             return ResponseEntity.ok().build();
         } catch (NoSuchTableException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "NoSuchTableException",
-                                    "code", 404
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "NoSuchTableException", HttpStatus.NOT_FOUND.value());
         } catch (NoSuchNamespaceException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "NoSuchNamespaceException",
-                                    "code", 404
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "NoSuchNamespaceException", HttpStatus.NOT_FOUND.value());
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "IllegalArgumentException",
-                                    "code", 400
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "InternalServerError",
-                                    "code", 500
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "InternalServerError", HttpStatus.INTERNAL_SERVER_ERROR.value());
         }
     }
 
     @PostMapping("/tables/rename")
-    public ResponseEntity<?> renameTable(
+    public ResponseEntity<Map<String, Object>> renameTable(
             @RequestBody Map<String, Object> request) {
         try {
             Map<String, Object> source = (Map<String, Object>) request.get("source");
             Map<String, Object> destination = (Map<String, Object>) request.get("destination");
 
             if (source == null || destination == null) {
-                throw new IllegalArgumentException("Source and destination are required");
+                return errorResponse("Source and destination are required", "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
             }
 
             List<String> sourceNamespace = (List<String>) source.get("namespace");
@@ -569,7 +442,7 @@ public class S3TablesRestCatalogController {
             String destName = (String) destination.get("name");
 
             if (sourceNamespace == null || sourceName == null || destNamespace == null || destName == null) {
-                throw new IllegalArgumentException("Namespace and name are required for both source and destination");
+                return errorResponse("Namespace and name are required for both source and destination", "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
             }
 
             TableIdentifier from = TableIdentifier.of(
@@ -582,37 +455,16 @@ public class S3TablesRestCatalogController {
             catalog.renameTable(from, to);
             return ResponseEntity.ok().build();
         } catch (NoSuchTableException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "NoSuchTableException",
-                                    "code", 404
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "NoSuchTableException", HttpStatus.NOT_FOUND.value());
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "IllegalArgumentException",
-                                    "code", 400
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "InternalServerError",
-                                    "code", 500
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "InternalServerError", HttpStatus.INTERNAL_SERVER_ERROR.value());
         }
     }
 
     @PostMapping("/namespaces/{namespace}/properties")
-    public ResponseEntity<?> updateNamespaceProperties(
+    public ResponseEntity<Map<String, Object>> updateNamespaceProperties(
             @PathVariable String namespace,
             @RequestBody Map<String, Object> request) {
         try {
@@ -658,37 +510,16 @@ public class S3TablesRestCatalogController {
 
             return ResponseEntity.ok(response);
         } catch (NoSuchNamespaceException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "NoSuchNamespaceException",
-                                    "code", 404
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "NoSuchNamespaceException", HttpStatus.NOT_FOUND.value());
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "IllegalArgumentException",
-                                    "code", 400
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "InternalServerError",
-                                    "code", 500
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "InternalServerError", HttpStatus.INTERNAL_SERVER_ERROR.value());
         }
     }
 
     @GetMapping("/tables/{namespace}/{table}/metadata")
-    public ResponseEntity<?> getTableMetadata(
+    public ResponseEntity<Map<String, Object>> getTableMetadata(
             @PathVariable String namespace,
             @PathVariable String table) {
         try {
@@ -707,28 +538,14 @@ public class S3TablesRestCatalogController {
 
             return ResponseEntity.ok(response);
         } catch (NoSuchTableException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "NoSuchTableException",
-                                    "code", 404
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "NoSuchTableException", HttpStatus.NOT_FOUND.value());
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "InternalServerError",
-                                    "code", 500
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "InternalServerError", HttpStatus.INTERNAL_SERVER_ERROR.value());
         }
     }
 
     @GetMapping("/tables/{namespace}/{table}/snapshots")
-    public ResponseEntity<?> listTableSnapshots(
+    public ResponseEntity<Map<String, Object>> listTableSnapshots(
             @PathVariable String namespace,
             @PathVariable String table) {
         try {
@@ -750,28 +567,14 @@ public class S3TablesRestCatalogController {
 
             return ResponseEntity.ok(response);
         } catch (NoSuchTableException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "NoSuchTableException",
-                                    "code", 404
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "NoSuchTableException", HttpStatus.NOT_FOUND.value());
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "InternalServerError",
-                                    "code", 500
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "InternalServerError", HttpStatus.INTERNAL_SERVER_ERROR.value());
         }
     }
 
     @GetMapping("/tables/{namespace}/{table}/metadata/{metadata-branch}")
-    public ResponseEntity<?> getMetadataByBranch(
+    public ResponseEntity<Map<String, Object>> getMetadataByBranch(
             @PathVariable String namespace,
             @PathVariable String table,
             @PathVariable("metadata-branch") String metadataBranch) {
@@ -793,28 +596,14 @@ public class S3TablesRestCatalogController {
 
             return ResponseEntity.ok(response);
         } catch (NoSuchTableException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "NoSuchTableException",
-                                    "code", 404
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "NoSuchTableException", HttpStatus.NOT_FOUND.value());
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "InternalServerError",
-                                    "code", 500
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "InternalServerError", HttpStatus.INTERNAL_SERVER_ERROR.value());
         }
     }
 
     @DeleteMapping("/namespaces/{namespace}")
-    public ResponseEntity<?> dropNamespace(
+    public ResponseEntity<Map<String, Object>> dropNamespace(
             @PathVariable String namespace) {
         try {
             String[] levels = namespace.split("\\.");
@@ -822,41 +611,52 @@ public class S3TablesRestCatalogController {
             catalog.dropNamespace(ns);
             return ResponseEntity.ok().build();
         } catch (NoSuchNamespaceException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "NoSuchNamespaceException",
-                                    "code", 404
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "NoSuchNamespaceException", HttpStatus.NOT_FOUND.value());
         } catch (NamespaceNotEmptyException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "NamespaceNotEmptyException",
-                                    "code", 409
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "NamespaceNotEmptyException", HttpStatus.CONFLICT.value());
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "IllegalArgumentException",
-                                    "code", 400
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                            "error", Map.of(
-                                    "message", e.getMessage(),
-                                    "type", "InternalServerError",
-                                    "code", 500
-                            )
-                    ));
+            return errorResponse(e.getMessage(), "InternalServerError", HttpStatus.INTERNAL_SERVER_ERROR.value());
+        }
+    }
+
+    @GetMapping("/namespaces/{namespace}/views/{view}")
+    public ResponseEntity<Map<String, Object>> getView(
+            @PathVariable String namespace,
+            @PathVariable String view) {
+        try {
+            TableIdentifier identifier = TableIdentifier.of(Namespace.of(namespace.split("\\.")), view);
+            Table icebergTable = catalog.loadTable(identifier);
+
+            // Check if the table is actually a view
+            String tableType = icebergTable.properties().getOrDefault("type", "table");
+            if (!"view".equals(tableType)) {
+                return errorResponse("Not a view: " + identifier, "NotAViewException", HttpStatus.NOT_FOUND.value());
+            }
+
+            Map<String, Object> metadata = new HashMap<>(icebergTable.properties());
+            metadata.put("format-version", 2);
+            metadata.put("location", icebergTable.location());
+            metadata.put("table-uuid", icebergTable.uuid());
+            metadata.put("last-updated-ms", System.currentTimeMillis());
+            metadata.put("last-column-id", icebergTable.schema().highestFieldId());
+            metadata.put("schema", SchemaParser.toJson(icebergTable.schema()));
+            metadata.put("current-schema-id", icebergTable.schema().schemaId());
+            metadata.put("view-version", metadata.getOrDefault("view-version", 1));
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("metadata-location", icebergTable.location());
+            response.put("metadata", metadata);
+            return ResponseEntity.ok(response);
+        } catch (NoSuchTableException e) {
+            return errorResponse(e.getMessage(), "NoSuchTableException", HttpStatus.NOT_FOUND.value());
+        } catch (NoSuchNamespaceException e) {
+            return errorResponse(e.getMessage(), "NoSuchNamespaceException", HttpStatus.NOT_FOUND.value());
+        } catch (IllegalArgumentException e) {
+            return errorResponse(e.getMessage(), "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
+        } catch (Exception e) {
+            return errorResponse(e.getMessage(), "InternalServerError", HttpStatus.INTERNAL_SERVER_ERROR.value());
         }
     }
 }

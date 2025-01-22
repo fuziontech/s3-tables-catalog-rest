@@ -77,8 +77,8 @@ def create_namespace(spark):
     print("\nListing available namespaces:")
     spark.sql("SHOW NAMESPACES").show()
 
-def create_and_populate_table(spark):
-    """Create and populate a table using SQL"""
+def create_table(spark):
+    """Create table using SQL"""
     print("\nCreating table...")
     create_table_sql = """
     CREATE TABLE IF NOT EXISTS demo.sales.orders (
@@ -95,7 +95,8 @@ def create_and_populate_table(spark):
     """
     spark.sql(create_table_sql)
 
-    # Check if the table exists and has data
+def populate_table(spark):
+    """Populate table with sample data"""
     print("\nChecking if table exists and has data...")
     row_count = spark.sql("SELECT COUNT(*) as count FROM demo.sales.orders").collect()[0].count
     if row_count > 0:
@@ -135,6 +136,9 @@ def cleanup_resources(spark):
         print("\nDropping table...")
         spark.sql("DROP TABLE IF EXISTS demo.sales.orders")
 
+        print("\nShowing tables...")
+        spark.sql("SHOW TABLES IN demo.sales").show()
+
         print("\nDropping namespace...")
         spark.sql("DROP NAMESPACE IF EXISTS demo.sales")
 
@@ -158,8 +162,10 @@ def main():
         return
 
     try:
+        cleanup_resources(spark)
         create_namespace(spark)
-        create_and_populate_table(spark)
+        create_table(spark)
+        populate_table(spark)
         query_data(spark)
     finally:
         cleanup_resources(spark)
