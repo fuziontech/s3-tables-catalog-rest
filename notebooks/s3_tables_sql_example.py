@@ -68,21 +68,21 @@ def test_catalog_connection():
 def create_namespace(spark):
     """Create a test namespace using SQL"""
     print("\nCreating namespace...")
-    # Create parent namespace first
-    spark.sql("CREATE NAMESPACE IF NOT EXISTS demo")
-    # Then create child namespace
-    spark.sql("CREATE NAMESPACE IF NOT EXISTS demo.test")
+    # Create namespace with single level name
+    spark.sql("""
+    CREATE NAMESPACE IF NOT EXISTS demo.sales
+    """)
 
     # Show namespaces to verify creation
     print("\nListing available namespaces:")
     spark.sql("SHOW NAMESPACES").show()
 
 def create_and_populate_table(spark):
-    """Create and populate a test table using SQL"""
+    """Create and populate a table using SQL"""
     print("\nCreating table...")
     create_table_sql = """
-    CREATE TABLE IF NOT EXISTS demo.test.sales (
-        sale_id BIGINT,
+    CREATE TABLE IF NOT EXISTS demo.sales.orders (
+        sale_id INT,
         product STRING,
         quantity INT,
         price DOUBLE,
@@ -95,9 +95,16 @@ def create_and_populate_table(spark):
     """
     spark.sql(create_table_sql)
 
+    # Check if the table exists and has data
+    print("\nChecking if table exists and has data...")
+    row_count = spark.sql("SELECT COUNT(*) as count FROM demo.sales.orders").collect()[0].count
+    if row_count > 0:
+        print(f"Table already exists with {row_count} rows. Skipping data insertion.")
+        return
+
     print("\nInserting sample data...")
     insert_data_sql = """
-    INSERT INTO demo.test.sales VALUES
+    INSERT INTO demo.sales.orders (sale_id, product, quantity, price, sale_date) VALUES
         (1, 'Laptop', 1, 999.99, '2024-01-01'),
         (2, 'Mouse', 2, 24.99, '2024-01-01'),
         (3, 'Keyboard', 1, 89.99, '2024-01-02'),
@@ -109,7 +116,7 @@ def create_and_populate_table(spark):
 def query_data(spark):
     """Query the data using SQL"""
     print("\nReading all data from table:")
-    spark.sql("SELECT * FROM demo.test.sales").show()
+    spark.sql("SELECT * FROM demo.sales.orders").show()
 
     print("\nSales summary by product:")
     summary_sql = """
@@ -117,24 +124,26 @@ def query_data(spark):
         product,
         SUM(quantity) as total_quantity,
         SUM(price) as total_revenue
-    FROM demo.test.sales
+    FROM demo.sales.orders
     GROUP BY product
     """
     spark.sql(summary_sql).show()
 
 def cleanup_resources(spark):
     """Clean up the created resources using SQL"""
-    print("\nDropping table...")
-    spark.sql("DROP TABLE IF EXISTS demo.test.sales")
+    try:
+        print("\nDropping table...")
+        spark.sql("DROP TABLE IF EXISTS demo.sales.orders")
 
-    # Drop namespaces in reverse order
-    print("\nDropping namespaces...")
-    spark.sql("DROP NAMESPACE IF EXISTS demo.test")
-    spark.sql("DROP NAMESPACE IF EXISTS demo")
+        print("\nDropping namespace...")
+        spark.sql("DROP NAMESPACE IF EXISTS demo.sales")
 
-    # Verify cleanup
-    print("\nListing remaining namespaces:")
-    spark.sql("SHOW NAMESPACES").show()
+        # Verify cleanup
+        print("\nListing remaining namespaces:")
+        spark.sql("SHOW NAMESPACES").show()
+    except Exception as e:
+        print(f"Error during cleanup: {e}")
+        # Continue with cleanup even if there are errors
 
 def main():
     print("Setting up dependencies...")
