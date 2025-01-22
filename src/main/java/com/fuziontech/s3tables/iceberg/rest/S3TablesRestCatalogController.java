@@ -243,20 +243,36 @@ public class S3TablesRestCatalogController {
                         // Convert sequence number to long before storing
                         Object seqNum = snapshot.get("sequence-number");
                         long sequenceNumber = seqNum instanceof Number ? ((Number) seqNum).longValue() : Long.parseLong(String.valueOf(seqNum));
+                        long snapshotId = ((Number) snapshot.get("snapshot-id")).longValue();
+                        long timestampMs = ((Number) snapshot.get("timestamp-ms")).longValue();
 
                         // Update table properties
                         UpdateProperties updateProps = table.updateProperties();
-                        updateProps.set("last-updated-ms", String.valueOf(snapshot.get("timestamp-ms")));
-                        updateProps.set("last-snapshot-id", String.valueOf(snapshot.get("snapshot-id")));
+                        updateProps.set("last-updated-ms", String.valueOf(timestampMs));
+                        updateProps.set("last-snapshot-id", String.valueOf(snapshotId));
                         updateProps.set("last-sequence-number", String.valueOf(sequenceNumber));
                         updateProps.set("manifest-list", String.valueOf(snapshot.get("manifest-list")));
+                        updateProps.set("current-snapshot-id", String.valueOf(snapshotId));
+                        updateProps.commit();
+
+                        // Add snapshot to snapshot log
+                        List<Map<String, Object>> snapshotLog = new ArrayList<>();
+                        Map<String, Object> logEntry = new HashMap<>();
+                        logEntry.put("snapshot-id", snapshotId);
+                        logEntry.put("timestamp-ms", timestampMs);
+                        snapshotLog.add(logEntry);
+
+                        // Update snapshot log in properties
+                        updateProps = table.updateProperties();
+                        updateProps.set("snapshot-log", objectMapper.writeValueAsString(snapshotLog));
                         updateProps.commit();
                     } else if ("set-snapshot-ref".equals(action)) {
-                        // For set-snapshot-ref, we just update the reference in properties
+                        // For set-snapshot-ref, we update both the reference and current snapshot
                         String refName = (String) update.get("ref-name");
                         Number snapshotId = (Number) update.get("snapshot-id");
                         table.updateProperties()
                                 .set("ref." + refName, String.valueOf(snapshotId))
+                                .set("current-snapshot-id", String.valueOf(snapshotId))
                                 .commit();
                     }
                 }
@@ -297,6 +313,7 @@ public class S3TablesRestCatalogController {
                     snap.put("summary", s.summary());
                     snap.put("manifest-list", s.manifestListLocation());
                     snap.put("schema-id", s.schemaId());
+                    snap.put("sequence-number", s.sequenceNumber());
                     snapshots.add(snap);
                 }
                 metadata.put("snapshots", snapshots);
@@ -324,9 +341,16 @@ public class S3TablesRestCatalogController {
                     metadata.put("last-sequence-number", 0L);
                 }
 
+                // Add current-snapshot-id if available
+                Snapshot currentSnapshot = table.currentSnapshot();
+                if (currentSnapshot != null) {
+                    metadata.put("current-snapshot-id", currentSnapshot.snapshotId());
+                } else {
+                    metadata.put("current-snapshot-id", null);
+                }
+
                 Map<String, Object> response = new HashMap<>();
-                String metadataLocation = table.location() + "/metadata/00000-" + table.uuid() + ".metadata.json";
-                response.put("metadata-location", metadataLocation);
+                response.put("metadata-location", table.location() + "/metadata/metadata.json");
                 response.put("metadata", metadata);
                 response.put("config", table.properties());
 
@@ -341,13 +365,12 @@ public class S3TablesRestCatalogController {
             Map<String, String> properties = (Map<String, String>) request.getOrDefault("properties", new HashMap<>());
 
             if (namespace == null || name == null || schema == null) {
-                System.out.println("Missing required fields - namespace: " + namespace + ", name: " + name + ", schema present: " + (schema != null));
                 return errorResponse("Namespace, name, and schema are required", "IllegalArgumentException", HttpStatus.BAD_REQUEST.value());
             }
 
             TableIdentifier identifier = TableIdentifier.of(Namespace.of(namespace.split("\\.")), name);
 
-            // Convert schema and spec to proper JSON strings
+            // Parse schema and partition spec
             String schemaJson = objectMapper.writeValueAsString(schema);
             Schema icebergSchema = SchemaParser.fromJson(schemaJson);
 
@@ -359,13 +382,11 @@ public class S3TablesRestCatalogController {
                 partitionSpec = PartitionSpec.unpartitioned();
             }
 
-            Table table = catalog.createTable(
-                    identifier,
-                    icebergSchema,
-                    partitionSpec,
-                    properties);
+            // Create the table
+            Table table = catalog.createTable(identifier, icebergSchema, partitionSpec, properties);
 
-            Map<String, Object> metadata = new HashMap<>(table.properties());
+            // Build metadata response
+            Map<String, Object> metadata = new HashMap<>();
             metadata.put("format-version", 2);
             metadata.put("location", table.location());
             metadata.put("table-uuid", table.uuid());
@@ -389,22 +410,39 @@ public class S3TablesRestCatalogController {
             metadata.put("sort-orders", Arrays.asList(defaultSortOrder));
             metadata.put("default-sort-order-id", 0);
 
+            // Initialize snapshot information
             metadata.put("snapshots", Arrays.asList());
             metadata.put("snapshot-log", Arrays.asList());
             metadata.put("metadata-log", Arrays.asList());
             metadata.put("last-sequence-number", 0L);
+            metadata.put("current-snapshot-id", null);
 
             // Add table properties
-            metadata.putAll(table.properties());
+            for (Map.Entry<String, String> entry : table.properties().entrySet()) {
+                String key = entry.getKey();
+                String value = entry.getValue();
+                if (key.equals("last-sequence-number")
+                        || key.equals("last-updated-ms")
+                        || key.equals("last-snapshot-id")
+                        || key.equals("schema-id")
+                        || key.equals("snapshot-id")
+                        || key.equals("timestamp-ms")) {
+                    metadata.put(key, Long.parseLong(value));
+                } else {
+                    metadata.put(key, value);
+                }
+            }
 
-            // Ensure last-sequence-number is present
+            // Ensure required fields are present
             if (!metadata.containsKey("last-sequence-number")) {
                 metadata.put("last-sequence-number", 0L);
             }
 
             Map<String, Object> response = new HashMap<>();
-            response.put("metadata-location", table.location());
+            response.put("metadata-location", table.location() + "/metadata/metadata.json");
             response.put("metadata", metadata);
+            response.put("config", table.properties());
+
             return ResponseEntity.ok(response);
         } catch (AlreadyExistsException e) {
             return errorResponse(e.getMessage(), "AlreadyExistsException", HttpStatus.CONFLICT.value());
@@ -580,8 +618,16 @@ public class S3TablesRestCatalogController {
                 metadata.put("last-sequence-number", 0L);
             }
 
+            // Add current-snapshot-id if available
+            Snapshot currentSnapshot = icebergTable.currentSnapshot();
+            if (currentSnapshot != null) {
+                metadata.put("current-snapshot-id", currentSnapshot.snapshotId());
+            } else {
+                metadata.put("current-snapshot-id", null);
+            }
+
             Map<String, Object> response = new HashMap<>();
-            response.put("metadata-location", icebergTable.location() + "/metadata/00000-" + icebergTable.uuid() + ".metadata.json");
+            response.put("metadata-location", icebergTable.location() + "/metadata/metadata.json");
             response.put("metadata", metadata);
             response.put("config", icebergTable.properties());
             return ResponseEntity.ok(response);
