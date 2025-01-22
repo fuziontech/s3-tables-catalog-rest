@@ -41,11 +41,11 @@ def init_spark():
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions") \
         .config("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkSessionCatalog") \
         .config("spark.sql.catalog.spark_catalog.type", "hadoop") \
-        .config("spark.sql.catalog.demo", "org.apache.iceberg.spark.SparkCatalog") \
-        .config("spark.sql.catalog.demo.catalog-impl", "org.apache.iceberg.rest.RESTCatalog") \
-        .config("spark.sql.catalog.demo.uri", "http://localhost:8080") \
-        .config("spark.sql.catalog.demo.warehouse", warehouse_location) \
-        .config("spark.sql.defaultCatalog", "demo") \
+        .config("spark.sql.catalog.default", "org.apache.iceberg.spark.SparkCatalog") \
+        .config("spark.sql.catalog.default.catalog-impl", "org.apache.iceberg.rest.RESTCatalog") \
+        .config("spark.sql.catalog.default.uri", "http://localhost:8080") \
+        .config("spark.sql.catalog.default.warehouse", warehouse_location) \
+        .config("spark.sql.defaultCatalog", "default") \
         .config("spark.hadoop.fs.s3a.access.key", aws_access_key) \
         .config("spark.hadoop.fs.s3a.secret.key", aws_secret_key) \
         .config("spark.hadoop.fs.s3a.region", aws_region) \
@@ -70,7 +70,7 @@ def create_namespace(spark):
     print("\nCreating namespace...")
     # Create namespace with single level name
     spark.sql("""
-    CREATE NAMESPACE IF NOT EXISTS demo.sales
+    CREATE NAMESPACE IF NOT EXISTS sales
     """)
 
     # Show namespaces to verify creation
@@ -81,7 +81,7 @@ def create_table(spark):
     """Create table using SQL"""
     print("\nCreating table...")
     create_table_sql = """
-    CREATE TABLE IF NOT EXISTS demo.sales.orders (
+    CREATE TABLE IF NOT EXISTS sales.orders (
         sale_id INT,
         product STRING,
         quantity INT,
@@ -98,14 +98,14 @@ def create_table(spark):
 def populate_table(spark):
     """Populate table with sample data"""
     print("\nChecking if table exists and has data...")
-    row_count = spark.sql("SELECT COUNT(*) as count FROM demo.sales.orders").collect()[0].count
+    row_count = spark.sql("SELECT COUNT(*) as count FROM sales.orders").collect()[0].count
     if row_count > 0:
         print(f"Table already exists with {row_count} rows. Skipping data insertion.")
         return
 
     print("\nInserting sample data...")
     insert_data_sql = """
-    INSERT INTO demo.sales.orders (sale_id, product, quantity, price, sale_date) VALUES
+    INSERT INTO sales.orders (sale_id, product, quantity, price, sale_date) VALUES
         (1, 'Laptop', 1, 999.99, '2024-01-01'),
         (2, 'Mouse', 2, 24.99, '2024-01-01'),
         (3, 'Keyboard', 1, 89.99, '2024-01-02'),
@@ -117,7 +117,7 @@ def populate_table(spark):
 def query_data(spark):
     """Query the data using SQL"""
     print("\nReading all data from table:")
-    spark.sql("SELECT * FROM demo.sales.orders").show()
+    spark.sql("SELECT * FROM sales.orders").show()
 
     print("\nSales summary by product:")
     summary_sql = """
@@ -125,7 +125,7 @@ def query_data(spark):
         product,
         SUM(quantity) as total_quantity,
         SUM(price) as total_revenue
-    FROM demo.sales.orders
+    FROM sales.orders
     GROUP BY product
     """
     spark.sql(summary_sql).show()
@@ -134,13 +134,13 @@ def cleanup_resources(spark):
     """Clean up the created resources using SQL"""
     try:
         print("\nDropping table...")
-        spark.sql("DROP TABLE IF EXISTS demo.sales.orders")
+        spark.sql("DROP TABLE IF EXISTS sales.orders")
 
         print("\nShowing tables...")
-        spark.sql("SHOW TABLES IN demo.sales").show()
+        spark.sql("SHOW TABLES IN sales").show()
 
         print("\nDropping namespace...")
-        spark.sql("DROP NAMESPACE IF EXISTS demo.sales")
+        spark.sql("DROP NAMESPACE IF EXISTS sales")
 
         # Verify cleanup
         print("\nListing remaining namespaces:")
@@ -162,7 +162,6 @@ def main():
         return
 
     try:
-        cleanup_resources(spark)
         create_namespace(spark)
         create_table(spark)
         populate_table(spark)
