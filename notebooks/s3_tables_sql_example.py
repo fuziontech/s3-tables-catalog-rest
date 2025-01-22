@@ -57,7 +57,14 @@ def init_spark():
         .config("spark.hadoop.fs.s3a.access.key", aws_access_key) \
         .config("spark.hadoop.fs.s3a.secret.key", aws_secret_key) \
         .config("spark.hadoop.fs.s3a.region", aws_region) \
+        .config("spark.hadoop.fs.s3a.path.style.access", "true") \
+        .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
+        .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider") \
+        .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false") \
         .config("spark.hadoop.fs.s3a.multiobjectdelete.enable", "false") \
+        .config("spark.sql.catalog.default.s3.path-style-access", "true") \
+        .config("spark.sql.catalog.default.s3.access-key-id", aws_access_key) \
+        .config("spark.sql.catalog.default.s3.secret-access-key", aws_secret_key) \
         .getOrCreate()
 
 def test_catalog_connection():
