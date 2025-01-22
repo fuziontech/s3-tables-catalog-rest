@@ -13,7 +13,8 @@ def setup_dependencies():
         os.makedirs('jars')
 
     jars = [
-        'https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.5.0/iceberg-spark-runtime-3.5_2.12-1.5.0.jar',
+        'https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.6.1/iceberg-spark-runtime-3.5_2.12-1.6.1.jar',
+        'https://repo1.maven.org/maven2/software/amazon/s3tables/s3-tables-catalog-for-iceberg-runtime/0.1.3/s3-tables-catalog-for-iceberg-runtime-0.1.3.jar',
         'https://repo1.maven.org/maven2/software/amazon/awssdk/bundle/2.29.26/bundle-2.29.26.jar',
         'https://repo1.maven.org/maven2/software/amazon/awssdk/url-connection-client/2.29.26/url-connection-client-2.29.26.jar'
     ]
@@ -35,9 +36,16 @@ def init_spark():
     if not all([aws_access_key, aws_secret_key, warehouse_location]):
         raise ValueError("AWS credentials and warehouse location must be set in .env file")
 
+    jars = [
+        'jars/iceberg-spark-runtime-3.5_2.12-1.6.1.jar',
+        'jars/s3-tables-catalog-for-iceberg-runtime-0.1.3.jar',
+        'jars/bundle-2.29.26.jar',
+        'jars/url-connection-client-2.29.26.jar'
+    ]
+
     return SparkSession.builder \
         .appName("S3TablesCatalogSQLExample") \
-        .config("spark.jars", "jars/iceberg-spark-runtime-3.5_2.12-1.5.0.jar,jars/bundle-2.29.26.jar,jars/url-connection-client-2.29.26.jar") \
+        .config("spark.jars", ",".join(jars)) \
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions") \
         .config("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkSessionCatalog") \
         .config("spark.sql.catalog.spark_catalog.type", "hadoop") \
@@ -49,6 +57,7 @@ def init_spark():
         .config("spark.hadoop.fs.s3a.access.key", aws_access_key) \
         .config("spark.hadoop.fs.s3a.secret.key", aws_secret_key) \
         .config("spark.hadoop.fs.s3a.region", aws_region) \
+        .config("spark.hadoop.fs.s3a.multiobjectdelete.enable", "false") \
         .getOrCreate()
 
 def test_catalog_connection():
