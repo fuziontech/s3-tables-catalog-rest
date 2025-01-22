@@ -3,27 +3,54 @@ import json
 import requests
 from pyspark.sql import SparkSession
 from dotenv import load_dotenv
-
+import subprocess
+import sys
+import time
 # Load environment variables from .env file
 load_dotenv()
 
 def setup_dependencies():
-    """Download required JARs if they don't exist"""
-    if not os.path.exists('jars'):
-        os.makedirs('jars')
+    """Download required JARs if not present"""
+    jar_urls = {
+        'iceberg-spark-runtime-3.5_2.12-1.6.1.jar': 'https://search.maven.org/remotecontent?filepath=org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.6.1/iceberg-spark-runtime-3.5_2.12-1.6.1.jar',
+        's3-tables-catalog-for-iceberg-runtime-0.1.3.jar': 'https://github.com/jameschueh/s3-tables-catalog/releases/download/v0.1.3/s3-tables-catalog-for-iceberg-runtime-0.1.3.jar',
+        'bundle-2.29.26.jar': 'https://search.maven.org/remotecontent?filepath=software/amazon/awssdk/bundle/2.29.26/bundle-2.29.26.jar',
+        'url-connection-client-2.29.26.jar': 'https://search.maven.org/remotecontent?filepath=software/amazon/awssdk/url-connection-client/2.29.26/url-connection-client-2.29.26.jar'
+    }
 
-    jars = [
-        'https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.6.1/iceberg-spark-runtime-3.5_2.12-1.6.1.jar',
-        'https://repo1.maven.org/maven2/software/amazon/s3tables/s3-tables-catalog-for-iceberg-runtime/0.1.3/s3-tables-catalog-for-iceberg-runtime-0.1.3.jar',
-        'https://repo1.maven.org/maven2/software/amazon/awssdk/bundle/2.29.26/bundle-2.29.26.jar',
-        'https://repo1.maven.org/maven2/software/amazon/awssdk/url-connection-client/2.29.26/url-connection-client-2.29.26.jar'
-    ]
+    # Create jars directory if it doesn't exist
+    os.makedirs('jars', exist_ok=True)
 
-    for jar in jars:
-        jar_name = os.path.basename(jar)
-        if not os.path.exists(f'jars/{jar_name}'):
-            print(f'Downloading {jar_name}...')
-            os.system(f'wget -P jars {jar}')
+    # Download missing JARs
+    for jar_name, url in jar_urls.items():
+        jar_path = os.path.join('jars', jar_name)
+        if not os.path.exists(jar_path):
+            print(f"Downloading {jar_name}...")
+            response = requests.get(url)
+            with open(jar_path, 'wb') as f:
+                f.write(response.content)
+
+    # Check if setuptools is installed
+    try:
+        import setuptools
+        print("setuptools already installed")
+    except ImportError:
+        print("Installing required Python packages...")
+        try:
+            subprocess.check_call(["uv", "pip", "install", "setuptools>=69.0.3"])
+            print("Setuptools installed, restarting script...")
+            os.execv(sys.executable, ['python'] + sys.argv)
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to install setuptools: {e}")
+            raise
+
+    # Install other dependencies
+    try:
+        subprocess.check_call(["uv", "pip", "install", "--upgrade", "pyarrow>=14.0.1", "pandas>=2.2.0"])
+        print("Successfully installed Python dependencies")
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to install Python dependencies: {e}")
+        raise
 
 def init_spark():
     """Initialize Spark session with required configurations"""
@@ -51,6 +78,17 @@ def init_spark():
         .config("spark.sql.catalog.default.uri", "http://localhost:8080") \
         .config("spark.sql.catalog.default.warehouse", warehouse_location) \
         .config("spark.sql.defaultCatalog", "default") \
+        .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions") \
+        .config("spark.sql.parquet.enableVectorizedReader", "false") \
+        .config("spark.sql.parquet.vectorized.reader.enabled", "false") \
+        .config("spark.sql.execution.arrow.pyspark.enabled", "false") \
+        .config("spark.sql.execution.arrow.pyspark.fallback.enabled", "true") \
+        .config("spark.sql.parquet.recordLevelFilter.enabled", "false") \
+        .config("spark.sql.optimizer.excludedRules", "org.apache.spark.sql.execution.datasources.PushPredicateThroughNonInnerJoin") \
+        .config("spark.sql.iceberg.vectorization.enabled", "false") \
+        .config("spark.sql.sources.useV1SourceList", "parquet") \
+        .config("spark.sql.files.maxPartitionBytes", "134217728") \
+        .config("spark.sql.adaptive.enabled", "false") \
         .getOrCreate()
 
 def test_catalog_connection():
@@ -116,20 +154,26 @@ def populate_table(spark):
     spark.sql(insert_data_sql)
 
 def query_data(spark):
-    """Query the data using SQL"""
+    """Query data from the table using non-vectorized read"""
     print("\nReading all data from table:")
-    spark.sql("SELECT * FROM sales.orders").show()
+    try:
+        # Use explicit casting and a simpler query
+        df = spark.sql("""
+            SELECT
+                CAST(sale_id AS STRING) as sale_id,
+                product,
+                CAST(quantity AS STRING) as quantity,
+                CAST(price AS STRING) as price,
+                CAST(sale_date AS STRING) as sale_date
+            FROM sales.orders
+        """)
 
-    print("\nSales summary by product:")
-    summary_sql = """
-    SELECT
-        product,
-        SUM(quantity) as total_quantity,
-        SUM(price) as total_revenue
-    FROM sales.orders
-    GROUP BY product
-    """
-    spark.sql(summary_sql).show()
+        # Use simple show() with no sorting
+        df.show(truncate=False)
+
+    except Exception as e:
+        print(f"Error querying data: {str(e)}")
+        raise
 
 def cleanup_resources(spark):
     """Clean up the created resources using SQL"""
@@ -166,9 +210,10 @@ def main():
         create_namespace(spark)
         create_table(spark)
         populate_table(spark)
+        time.sleep(30)
         query_data(spark)
     finally:
-        cleanup_resources(spark)
+        # cleanup_resources(spark)
         print("\nStopping Spark session...")
         spark.stop()
 
