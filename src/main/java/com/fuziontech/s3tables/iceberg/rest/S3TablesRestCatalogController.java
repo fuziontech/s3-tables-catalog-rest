@@ -13,6 +13,7 @@ import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.PartitionSpecParser;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SchemaParser;
+import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
@@ -229,19 +230,58 @@ public class S3TablesRestCatalogController {
                 TableIdentifier identifier = TableIdentifier.of(Namespace.of(namespace.split("\\.")), name);
                 Table table = catalog.loadTable(identifier);
 
-                // Return successful commit response
-                Map<String, Object> metadata = new HashMap<>(table.properties());
+                // Build metadata in the format Iceberg expects
+                Map<String, Object> metadata = new HashMap<>();
                 metadata.put("format-version", 2);
-                metadata.put("location", table.location());
                 metadata.put("table-uuid", table.uuid());
+                metadata.put("location", table.location());
                 metadata.put("last-updated-ms", System.currentTimeMillis());
                 metadata.put("last-column-id", table.schema().highestFieldId());
                 metadata.put("schema", SchemaParser.toJson(table.schema()));
+                metadata.put("schemas", Arrays.asList(SchemaParser.toJson(table.schema())));
                 metadata.put("current-schema-id", table.schema().schemaId());
 
+                // Add partition spec
+                metadata.put("partition-spec", PartitionSpecParser.toJson(table.spec()));
+                metadata.put("partition-specs", Arrays.asList(PartitionSpecParser.toJson(table.spec())));
+                metadata.put("default-spec-id", table.spec().specId());
+                metadata.put("last-partition-id", table.spec().fields().stream()
+                        .mapToInt(field -> field.fieldId())
+                        .max()
+                        .orElse(0));
+
+                // Add sort order
+                Map<String, Object> defaultSortOrder = new HashMap<>();
+                defaultSortOrder.put("order-id", 0);
+                defaultSortOrder.put("fields", Arrays.asList());
+                metadata.put("sort-orders", Arrays.asList(defaultSortOrder));
+                metadata.put("default-sort-order-id", 0);
+
+                // Add snapshot information
+                List<Map<String, Object>> snapshots = new ArrayList<>();
+                for (Snapshot s : table.snapshots()) {
+                    Map<String, Object> snap = new HashMap<>();
+                    snap.put("snapshot-id", s.snapshotId());
+                    snap.put("timestamp-ms", s.timestampMillis());
+                    snap.put("summary", s.summary());
+                    snap.put("manifest-list", s.manifestListLocation());
+                    snap.put("schema-id", s.schemaId());
+                    snapshots.add(snap);
+                }
+                metadata.put("snapshots", snapshots);
+                metadata.put("snapshot-log", Arrays.asList());
+                metadata.put("metadata-log", Arrays.asList());
+                metadata.put("last-sequence-number", 0L);
+
+                // Add properties
+                metadata.putAll(table.properties());
+
                 Map<String, Object> response = new HashMap<>();
-                response.put("metadata-location", table.location() + "/metadata/00000-" + table.uuid() + ".metadata.json");
+                String metadataLocation = table.location() + "/metadata/00000-" + table.uuid() + ".metadata.json";
+                response.put("metadata-location", metadataLocation);
                 response.put("metadata", metadata);
+                response.put("config", table.properties());
+
                 return ResponseEntity.ok(response);
             }
 
